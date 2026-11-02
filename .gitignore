@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.pth
+*.pt
+*.log
+*.log.json
+work_dirs/
+data/
+outputs/
+.DS_Store
+*.zip
+*.tar.gz

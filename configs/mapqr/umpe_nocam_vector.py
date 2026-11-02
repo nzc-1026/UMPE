@@ -1,0 +1,127 @@
+_base_ = ['./mapqr_nusc_r50_24ep_new_Raster.py']
+
+# ---------------------------------------------------------------
+# No camera, no HD prior.
+# Inputs: OSM vector SD + rasterized SD + satellite image.
+# The vector branch follows UMPE's MapGraphTransformer +
+# DualVecCrossFusion (HD branch left empty).
+# ---------------------------------------------------------------
+_ROOT = '/home/lbb/Documents/space/umpe_hdmap/data/nuscenes/'
+_SD_PKL = _ROOT + 'inter_nuscenes_trainval_sdmap_new.pkl'
+
+_AUX_OFF = dict(
+    use_aux_seg=False,
+    bev_seg=False,
+    pv_seg=False,
+    seg_classes=1,
+    feat_down_sample=32,
+    pv_thickness=1,
+)
+
+total_epochs = 12
+find_unused_parameters = True
+fp16 = None
+
+# keep the raster baseline's optimizer settings for a like-for-like run
+optimizer = dict(
+    type='AdamW',
+    lr=6e-4,
+    weight_decay=0.01,
+    paramwise_cfg=None,
+)
+
+runner = dict(type='EpochBasedRunner', max_epochs=12)
+checkpoint_config = dict(interval=1, max_keep_ckpts=3)
+
+model = dict(
+    use_grid_mask=False,
+    img_backbone=None,
+    img_neck=None,
+    pretrained=None,
+    map_encoder=dict(
+        type='MapGraphTransformer',
+        input_dim=365,      # 11 points * 32 PE dims + 11 class one-hot + 2 source
+        dmodel=256,
+        hidden_dim=256,
+        nheads=8,
+        nlayers=6,
+        batch_first=True,
+        pos_encoder=dict(
+            type='SineContinuousPositionalEncoding',
+            num_feats=16,   # 2 * 16 = 32 per point
+            temperature=1000,
+            normalize=True,
+            range=[30.0, 60.0],     # pc_range x/y span
+            offset=[-15.0, -30.0],  # pc_range x/y min
+        ),
+    ),
+    pts_bbox_head=dict(
+        aux_seg=dict(
+            use_aux_seg=False,
+            bev_seg=False,
+            pv_seg=False,
+            seg_classes=1,
+            feat_down_sample=32,
+        ),
+        transformer=dict(
+            vector_fusion_layer=dict(
+                type='DualVecCrossFusion',
+                embed_dims=256,
+                num_heads=8,
+                source_dropout_p=0.3,
+                bev_h=200,
+                bev_w=100,
+                init_cfg=dict(
+                    type='Xavier', layer='Linear', distribution='uniform'),
+            ),
+        ),
+    ),
+)
+
+train_pipeline = [
+    dict(type='LoadSatelliteFromFile', to_float32=True, normalize=True),
+    dict(type='LoadSDRasterFromFile', to_float32=True, normalize=True),
+    dict(type='DefaultFormatBundle3D', with_gt=False, with_label=False,
+         class_names=['divider', 'ped_crossing', 'boundary']),
+    dict(type='PackSDMap'),
+    dict(type='CustomCollect3D',
+         keys=['satellite_img', 'SDRaster_img', 'sdmap']),
+]
+
+test_pipeline = [
+    dict(type='LoadSatelliteFromFile', to_float32=True, normalize=True),
+    dict(type='LoadSDRasterFromFile', to_float32=True, normalize=True),
+    dict(type='DefaultFormatBundle3D', with_gt=False, with_label=False,
+         class_names=['divider', 'ped_crossing', 'boundary']),
+    dict(type='PackSDMap'),
+    dict(type='CustomCollect3D',
+         keys=['satellite_img', 'SDRaster_img', 'sdmap']),
+]
+
+data = dict(
+    samples_per_gpu=4,
+    workers_per_gpu=4,
+    train=dict(
+        data_root=_ROOT,
+        ann_file=_ROOT + 'nuscenes_map_infos_temporal_train.pkl',
+        sdmap_pkl=_SD_PKL,
+        pipeline=train_pipeline,
+        aux_seg=_AUX_OFF,
+    ),
+    val=dict(
+        data_root=_ROOT,
+        ann_file=_ROOT + 'nuscenes_map_infos_temporal_val.pkl',
+        map_ann_file=_ROOT + 'nuscenes_map_anns_val.json',
+        sdmap_pkl=_SD_PKL,
+        pipeline=test_pipeline,
+        aux_seg=_AUX_OFF,
+    ),
+    test=dict(
+        data_root=_ROOT,
+        ann_file=_ROOT + 'nuscenes_map_infos_temporal_val.pkl',
+        map_ann_file=_ROOT + 'nuscenes_map_anns_val.json',
+        sdmap_pkl=_SD_PKL,
+        pipeline=test_pipeline,
+        aux_seg=_AUX_OFF,
+    ),
+)
